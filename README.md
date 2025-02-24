@@ -16,7 +16,7 @@
 - For training:
     - Run the training script using the following command:
         ```bash
-        python register_images.py \
+        python train.py \
         --datadir {path to datadir} \
         --json {json_name} \
         --image_loss {loss function to use} \
