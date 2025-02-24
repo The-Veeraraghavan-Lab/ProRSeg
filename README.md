@@ -16,10 +16,10 @@
 - For training:
     - Run the training script using the following command:
         ```bash
-        python register_images.py
-        --datadir {path to datadir}
-        --json {json_name}
-        --image_loss {loss function to use}
+        python register_images.py \
+        --datadir {path to datadir} \
+        --json {json_name} \
+        --image_loss {loss function to use} \
         --cache {Load images in memory}
         ```
  ## Note
