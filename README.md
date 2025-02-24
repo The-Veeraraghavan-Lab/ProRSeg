@@ -20,7 +20,6 @@
         --datadir {path to datadir}
         --json {json_name}
         --image_loss {loss function to use}
-        --affine {to add affine rotations and translations to dataloader}
         --cache {Load images in memory}
         ```
  ## Note
