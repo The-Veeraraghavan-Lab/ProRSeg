@@ -24,8 +24,8 @@
         --cache {Load images in memory}
         ```
  ## Note
- - Note, the set of codes naturally assume that the name of the image is the last piece of information in the json file. If this is not the case, edit <a href="https://github.com/The-Veeraraghavan-Lab/ProRSeg/blob/main/train.py#L463">this line</a> under `train.py`
-- Note, for optimal performance, preprocess the images offline before running the model. The preprocessing includes:
+ - The set of codes naturally assume that the name of the image is the last piece of information in the json file. If this is not the case, edit <a href="https://github.com/The-Veeraraghavan-Lab/ProRSeg/blob/main/train.py#L463">this line</a> under `train.py`
+- For optimal performance, preprocess the images offline before running the model. The preprocessing includes:
     1. Rigid Registration
     2. Scan background cropping
     3. Resizing

@@ -5,7 +5,7 @@ import torch
 import matplotlib
 matplotlib.use('Agg')
 
-from monai_data_loader_mri_pancreas import get_loader_Nishant
+from utils_dataloader import get_dataloader
 import matplotlib.pyplot as plt
 from torch.autograd import Variable
 
@@ -53,6 +53,11 @@ parser.add_argument('--datadir', help='base data directory')
 parser.add_argument('--json', help='base data directory')
 parser.add_argument('--model_dir', default='models', help='model output directory (default: models)')
 parser.add_argument('--cache',  action='store_true', help='Cache training dataset for faster training')
+parser.add_argument('--cache_num', type=int, default=200, help='Data of images to be cached into memory (default: 200)')
+parser.add_argument('--a_min', default=0, type=float, help='a_min in ScaleIntensityRanged')
+parser.add_argument('--a_max', default=2000, type=float, help='a_max in ScaleIntensityRanged')
+parser.add_argument('--b_min', default=0.0, type=float, help='b_min in ScaleIntensityRanged')
+parser.add_argument('--b_max', default=1.0, type=float, help='b_max in ScaleIntensityRanged')
 
 # training parameters
 parser.add_argument('--gpu', default='3', help='GPU ID number(s), comma-separated (default: 0)')
