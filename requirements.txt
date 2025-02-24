@@ -1,0 +1,9 @@
+monai==0.8.1
+monai[nibabel,itk]
+simpleITK
+pystrum
+scikit-image
+numpy==1.26.3
+pandas
+medpy
+pytorch-ignite

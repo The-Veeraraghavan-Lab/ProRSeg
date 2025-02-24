@@ -1,16 +1,5 @@
 #!/usr/bin/env python
 
-"""
-Example script to train a VoxelMorph model.
-
-For the CVPR and MICCAI papers, we have data arranged in train, validate, and test folders. Inside each folder
-are normalized T1 volumes and segmentations in npz (numpy) format. You will have to customize this script slightly
-to accommodate your own data. All images should be appropriately cropped and scaled to values between 0 and 1.
-
-If an atlas file is provided with the --atlas flag, then scan-to-atlas training is performed. Otherwise,
-registration will be scan-to-scan.
-"""
-
 import torch.nn as nn
 import torch
 import matplotlib
@@ -54,19 +43,14 @@ def save_args(args, filename='args.json'):
     with open(filename, 'w') as file:
         json.dump(vars(args), file, indent=4)
 
-'''
-python train.py --smooth 150 --seg_w 3 --image_loss ncc --win_sz 3 --affine --svdir model_save_dirs/train_ncc_win_3 --cache
 
-python train.py --smooth 150 --seg_w 3 --image_loss ncc --win_sz 3 --affine --svdir model_save_dirs/test --cache
-
-'''
 # parse the commandline
 parser = argparse.ArgumentParser()
 fig = plt.figure()
 ax = fig.add_subplot(211)
 # data organization parameters
-parser.add_argument('--datadir', default='/lab/deasylab1/Nishant/ProRSeg/Dataset/Old_17_cases/histogram_matched_data', help='base data directory')
-parser.add_argument('--json', default='17_cases.json', help='base data directory')
+parser.add_argument('--datadir', help='base data directory')
+parser.add_argument('--json', help='base data directory')
 parser.add_argument('--model_dir', default='models', help='model output directory (default: models)')
 parser.add_argument('--cache',  action='store_true', help='Cache training dataset for faster training')
 
@@ -231,12 +215,6 @@ for epoch in range(args.initial_epoch, args.epochs):
         model_seg_sv_path=sv_folder+str(epoch)+'_seg_model.pt'
         torch.save(model_seg3d.state_dict(), model_seg_sv_path)
 
-
-    
-
-           
-
-
     for i_iter, item_ in enumerate(train_loader_a): 
         #print (item_.keys())
         #print  ('cbct size ',cbct_x.size())
@@ -302,25 +280,6 @@ for epoch in range(args.initial_epoch, args.epochs):
                 planct_x_def, planct_y_def, pos_flow_cur,states_h,states_c = model(planct_x,planct_y,cbct_x,states_h,states_c)
             else:
                 planct_x_def, planct_y_def, pos_flow_cur,states_h,states_c = model(planct_x_def,planct_y_def,cbct_x,states_h,states_c)
-
-            # reg_result_new = torch.squeeze(planct_y_def.clone()).data.cpu().numpy()
-
-            ### Code to deal with incomplete segmentations (2 cm ring around the tumor)
-            # for label_num in range(planct_y_def.shape[1]):
-            #     if (np.sum(torch.squeeze(planct_y_def).data.cpu().numpy()[label_num:,:,105]>0)==0):
-            #         flag = 0
-            #         for i in range(60, planct_y_def.shape[-1]):
-            #             slice = torch.squeeze(CBCT_y_mt).data.cpu().numpy()[label_num,:,:,i]
-                        
-            #             if flag == 0:
-            #                 if np.sum(slice>0) < 100:
-            #                     flag = 1
-            #             else:
-            #                 # seg_result_new[:,:,i] = 0
-            #                 reg_result_new[label_num, :,:,i] = 0
-
-            # reg_result_new = np.expand_dims(reg_result_new, axis=0)
-            # reg_result_new = torch.tensor(reg_result_new).cuda()
             
             reg_result_new = planct_y_def
 
@@ -329,12 +288,6 @@ for epoch in range(args.initial_epoch, args.epochs):
             gradient_loss= grad_loss_func(pos_flow_cur)* smooth_w 
             plt_simi_loss=plt_simi_loss+Sim_loss
             plt_smooth_loss=plt_smooth_loss+gradient_loss
-
-            # seg_in_r=torch.cat((cbct_x,planct_x_def),1)
-            # seg_in_r=torch.cat((seg_in_r,planct_y_def),1)
-
-            # if iter_id ==0:
-            #     state_seg_r=None
             
             # Landmark loss with smoothening to prevent excessive deformation of organs
             landmark_loss=structure_loss_cred(reg_result_new,CBCT_y_mt)
@@ -377,27 +330,6 @@ for epoch in range(args.initial_epoch, args.epochs):
 
             seg,h_seg,c_seg = model_seg3d(seg_in,state_seg)
 
-
-            ### Code to deal with incomplete segmentations (2 cm ring around the tumor)
-            # seg_result_new = torch.squeeze(seg.clone()).data.cpu().numpy()
-
-            # for label_num in range(seg.shape[1]):
-            #     if (np.sum(torch.squeeze(cbct_y).data.cpu().numpy()[:,:,105]>0)==0):
-            #         flag = 0
-            #         for i in range(60, cbct_y.shape[-1]):
-            #             slice = torch.squeeze(cbct_y).data.cpu().numpy()[:,:,i]
-                        
-            #             if flag == 0:
-            #                 if np.sum(slice>0) < 300:
-            #                     flag = 1
-            #             else:
-            #                 # seg_result_new[:,:,i] = 0
-            #                 seg_result_new[label_num, :,:,i] = 0
-            # seg_result_new = np.expand_dims(seg_result_new, axis=0)
-            # seg_result_new = torch.tensor(seg_result_new).cuda()
-
-            # print ('seg size ',seg.size())
-            # print ('cbct_y size ',cbct_y.size())
             seg_result_new = seg
             seg_loss=seg_loss_cred(seg_result_new,cbct_y)
 
@@ -405,16 +337,12 @@ for epoch in range(args.initial_epoch, args.epochs):
             seg_loss.backward()
             optimizer_seg.step()
             state_seg=[h_seg.detach(),c_seg.detach()]
-            #planct_x_tep=y_pred.detach()
 
         # print step info
         seg_loss_info = 'Seg loss: %.6f  (%s)' % (seg_loss.item(),', '.join(loss_list))
         Strcture_seg_loss_info = 'Seg loss: %.6f  (%s)' % (landmark_loss.item(),', '.join(loss_list))
         epoch_info = 'epoch: %04d' % (epoch + 1)
-        #step_info = ('step: %d/%d' % (step + 1, args.steps_per_epoch)).ljust(14)
         time_info = 'time: %.2f sec' % (time.time() - step_start_time)
-
-        #print('  '.join((epoch_info, time_info, loss_info,seg_loss_info)), flush=True)
 
 
         if total_steps%1==0:
@@ -429,7 +357,6 @@ for epoch in range(args.initial_epoch, args.epochs):
             ax.plot(plt_iternm,plot_loss_value,color='r',label='Simi_loss',linestyle='solid')
             ax.plot(plt_iternm,plot_loss_value1,color='b',label='Smooth_loss',linestyle='dashed')
             ax.plot(plt_iternm,plot_loss_value2,color='k',label='Strcture_loss',linestyle='solid') 
-                        #ax.plot(plt_iternm,plot_loss_value2,color='b',label='Seg_loss',linestyle='solid')
 
                         
 
@@ -445,6 +372,7 @@ for epoch in range(args.initial_epoch, args.epochs):
 
             if train_sv_flag == 0:
                 train_sv_flag = 1
+
                 ### Saving one training image
                 y_pred_show=torch.squeeze(y_pred)
                 planct_x_show=torch.squeeze(planct_x)
@@ -526,7 +454,6 @@ for epoch in range(args.initial_epoch, args.epochs):
             best_seg_dsc = 0
             print('Validation')
             for i_iter_val, item_val in enumerate(val_loader):    
-                # print('VAL')
                 
 
                 cbct_val_img=item_val['fix_img'].float().cuda()
@@ -588,44 +515,16 @@ for epoch in range(args.initial_epoch, args.epochs):
                 seg_result=torch.argmax(seg_result, dim=1)
                 
 
-                #print (planct_val_msk.size())
-                #print (y_m_pred_val.size())
                 reg_result=torch.zeros(1, *inshape)
                 reg_result[y_m_pred_val[:,0,:,:,:]>0.5]=1
                 reg_result[y_m_pred_val[:,1,:,:,:]>0.5]=2
                 reg_result[y_m_pred_val[:,2,:,:,:]>0.5]=3
                 reg_result[y_m_pred_val[:,3,:,:,:]>0.5]=4
 
-
-                #y_m_pred_val=torch.argmax(y_m_pred_val, dim=1)
-                
-                # gt=cbct_val_msk.float().cpu().numpy()
-                # print(gt.shape)
-
-                # seg_result=seg_result.float().cpu().numpy()
-                # reg_result=reg_result.float().cpu().numpy()
-
-                # print(seg_result.shape)
-                # seg_result_new = np.squeeze(seg_result.copy())
-                # reg_result_new = np.squeeze(reg_result.copy())
-
-                ### Code to deal with incomplete segmentations (2 cm ring around the tumor)
-                # if (np.sum(torch.squeeze(cbct_val_msk).data.cpu().numpy()[:,:,105]>0)==0):
-                #     flag = 0
-                #     for i in range(60, planct_y_def.shape[-1]):
-                #         slice = torch.squeeze(cbct_val_msk).data.cpu().numpy()[:,:,i]
-                        
-                #         if flag == 0:
-                #             if np.sum(slice>0) < 300:
-                #                 flag = 1
-                #         else:
-                #             seg_result_new[:,:,i] = 0
-                #             reg_result_new[:,:,i] = 0
-
                 #print (dsc_reg_4)
                 info = {'Source_Name':source_name, 'Target_Name':target_name}
 
-                spacing = (1.0,1.0,1.0) # Not actual spacing, needs to be fixed
+                spacing = (1.0,1.0,1.0) # HD95 calculated in voxel units if spacing is kept as 1.0,1.0,1.0
                 eval.calculate_results(info, spacing, cbct_val_msk, planct_val_msk, reg_result, seg_result, dvf_flow)
         
         info = eval.average_results()
