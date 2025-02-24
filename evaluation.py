@@ -128,17 +128,6 @@ class Eval:
                 for i in range(len(self.class_list)):
                     label = 'Reg_'+ self.class_list[i] + '_Displacement'
                     info[label] = reg_disp[i]
-            # rigid_dice = calculate_dice(gt, rigid_msk, len(self.class_list))
-            # rigid_hd95 = calculate_hd_95(gt, rigid_msk, spacing, len(self.class_list))
-
-            # for i in range(len(self.class_list)):
-            #     label = 'Rigid_'+ self.class_list[i] + '_Dice'
-            #     info[label] = rigid_dice[i]
-            # for i in range(len(self.class_list)):
-            #     label = 'Rigid_'+ self.class_list[i] + '_HD95'
-            #     info[label] = rigid_hd95[i]
-
-            
 
         if seg_result != None:
             seg_result=seg_result.float().cpu().numpy()
@@ -178,16 +167,6 @@ class Eval:
             for i in range(len(self.class_list)):
                 label = 'Reg_'+ self.class_list[i] + '_HD95'
                 info[label] = str(round(self.df[label].mean(),2))+' '+ u"\u00B1"+' '+str(round(self.df[label].std(),2))
-
-            # # Rigid Dice
-            # for i in range(len(self.class_list)):
-            #     label = 'Rigid_'+ self.class_list[i] + '_Dice'
-            #     info[label] = str(round(self.df[label].mean(),2))+' '+ u"\u00B1"+' '+str(round(self.df[label].std(),2))
-
-            # # Rigid HD95
-            # for i in range(len(self.class_list)):
-            #     label = 'Rigid_'+ self.class_list[i] + '_HD95'
-            #     info[label] = str(round(self.df[label].mean(),2))+' '+ u"\u00B1"+' '+str(round(self.df[label].std(),2))
 
             if self.calc_disp:
                 # Reg Displacement
