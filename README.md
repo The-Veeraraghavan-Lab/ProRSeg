@@ -1,4 +1,4 @@
-### Project Page: ProRSeg
+### ProRSeg
 ### Progressively refined deep joint registration segmentation (ProRSeg) of gastrointestinal organs at risk: Application to MRI and cone-beam CT 
 
 <img src="imgs/model_diagram.png" width="1200px"/>
