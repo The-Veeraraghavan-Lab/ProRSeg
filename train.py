@@ -313,7 +313,7 @@ for epoch in range(args.initial_epoch, args.epochs):
         plt_strcture_loss=plt_strcture_loss/flow_num
 
 
-        for seg_iter in range (0,flow_num+1):
+        for seg_iter in range (0,flow_num):
             #print (seg_iter)
             if seg_iter==0:
                 h=None
