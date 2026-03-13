@@ -85,7 +85,8 @@ class VxmDense_3D(LoadableModel):
 
         # configure transformer
         self.transformer = layers.SpatialTransformer(inshape)
-        self.transformer_nearest = layers.SpatialTransformer(inshape)
+        
+        #self.transformer_nearest = layers.SpatialTransformer(inshape)
         self.transformer_nearest = layers.SpatialTransformer(inshape,mode='nearest')
 
 
@@ -6173,7 +6174,10 @@ class VxmDense_3D_LSTM_Step_Reg_All_Encoder_LSTM(LoadableModel):
         #source_m = self.transformer_nearest(source_m, pos_flow)
         
         source = self.transformer(source, pos_flow,self.range_flow)
-        source_m = self.transformer_nearest(source_m,pos_flow,self.range_flow)
+        
+        #using trilinear interpolation improves loss characteristics for masks
+        #source_m = self.transformer_nearest(source_m,pos_flow,self.range_flow)
+        source_m = self.transformer(source_m,pos_flow,self.range_flow)
 
         positive_deform_list.append(pos_flow)
         source_deformed_list.append(source)

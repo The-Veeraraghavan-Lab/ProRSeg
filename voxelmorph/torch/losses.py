@@ -16,6 +16,11 @@ class DiceLoss_test_use(nn.Module):
         :param pred_stage2: (B, 9, 256, 256)
         :param target: (B, 256, 256)
         :return: Dice
+        
+        
+        Square in denominator is a better behaving version of DSC loss
+        https://aclanthology.org/2020.acl-main.45.pdf
+        https://arxiv.org/pdf/1606.04797
         """
         num_organ=self.num_organ
 
@@ -30,7 +35,7 @@ class DiceLoss_test_use(nn.Module):
         dice_stage1 /= num_organ
         dice = dice_stage1 
         return (1 - dice).mean()
-    
+
 class GANLoss(nn.Module):
     def __init__(self, use_lsgan=True, target_real_label=1.0, target_fake_label=0.0,
                  tensor=torch.FloatTensor):

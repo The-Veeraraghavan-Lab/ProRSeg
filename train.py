@@ -1,39 +1,33 @@
 #!/usr/bin/env python
 
-import torch.nn as nn
 import torch
 import matplotlib
 matplotlib.use('Agg')
 
 from utils_dataloader import get_dataloader
 import matplotlib.pyplot as plt
-from torch.autograd import Variable
 
 fig = plt.figure()
 ax = fig.add_subplot(211)
-import torch.nn.functional as F
 
 plot_loss_value=[]
 plot_loss_value1=[]
 plot_loss_value2=[]
-
+plot_loss_value3=[]
 
 import os
 import argparse
 import time
 import numpy as np
-import torch
-import torch.nn as nn
+
 import nibabel as nib
 
 os.environ['VXM_BACKEND'] = 'pytorch'
 import voxelmorph as vxm
-import torch.nn.functional as F
-from torch.autograd import Variable
 from monai.losses import DiceCELoss
-import math 
 import json
 from evaluation import Eval
+import random
 
 torch.cuda.set_device(0)
 torch.backends.cudnn.benchmark = True
@@ -90,6 +84,7 @@ parser.add_argument('--flow_range', type=float, default=5, help='flow range (def
 parser.add_argument('--flownum', type=int, default=7, help='flow number (default: 7)')
 # for output
 parser.add_argument('--svdir', type=str, default='train', help='weight of deformation loss (default: 0.01)')
+parser.add_argument('--class_list',nargs='+',default=['Liver', 'Lg_Bowel', 'Sm_Bowel', 'Duo_Stomach'],help='List of class names')
 #print ('flow_range is ',args.flow_range)
 args = parser.parse_args()
 smooth_w=args.smooth
@@ -121,6 +116,9 @@ print ('flow range is ',args.flow_range)
 # Input image shape
 inshape = args.inshape if args.inshape else (128,192,128)
 
+#class_list = ['Liver', 'Lg_Bowel','Sm_Bowel','Duo_Stomach']
+class_list=args.class_list
+nlabels=len(class_list)
 
 # device handling
 gpus = args.gpu.split(',')
@@ -160,7 +158,7 @@ if nb_gpus > 1:
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
 # Segmentation Model
-model_seg3d = vxm.networks.UNet3D_Seg_LSTM(in_channels=1+1+4,out_channels=4+1,final_sigmoid=False)
+model_seg3d = vxm.networks.UNet3D_Seg_LSTM(in_channels=nlabels+1+1,out_channels=nlabels+1,final_sigmoid=False)
 
 # Segmentation Optimizer
 optimizer_seg = torch.optim.Adam(model_seg3d.parameters(), lr=args.lr)
@@ -192,9 +190,9 @@ seg_loss_cred = DiceCELoss(to_onehot_y=True,
 
 
 
-structure_loss_cred = vxm.losses.DiceLoss_test_use()
+structure_loss_cred = vxm.losses.DiceLoss_test_use(num_organ=nlabels)
 
-train_loader_a,val_loader=get_loader_Nishant(args)
+train_loader_a,val_loader=get_dataloader(args)
 
 total_steps=0       
 
@@ -205,76 +203,62 @@ iter_count=0
 flow_ini=torch.zeros(1, 3, *inshape).cuda()
 range_flow=1
 
-
-class_list = ['Liver', 'Lg_Bowel','Sm_Bowel','Duo_Stomach']
 eval = Eval(train_tep_sv, class_list)
+
 
 for epoch in range(args.initial_epoch, args.epochs):
     eval.update_epoch((epoch+1))
     train_sv_flag = 0
     print ('running in epoch',epoch)
-    if epoch >1 and epoch % 5 ==0:
-        model_sv_path=sv_folder+str(epoch)+'_reg_model.pt'
-        model.save(model_sv_path)
-
-        model_seg_sv_path=sv_folder+str(epoch)+'_seg_model.pt'
-        torch.save(model_seg3d.state_dict(), model_seg_sv_path)
+    schedule_epochs=args.epochs/2
+    if epoch>=schedule_epochs:
+        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr*(1.0-(epoch-schedule_epochs)/(schedule_epochs)))
 
     for i_iter, item_ in enumerate(train_loader_a): 
-        #print (item_.keys())
-        #print  ('cbct size ',cbct_x.size())
         total_steps=total_steps+1
-        cbct_x=item_['fix_img'].float().cuda()
-        cbct_y=item_['fix_msk'].float().cuda()
-        planct_x=item_['move_img'].float().cuda()
-        planct_y=item_['move_msk'].float().cuda()
+        if random.uniform(0, 1)>0.5: #randomly swap direction (equal probability)
+            Fixed_x=item_['move_img'].float().cuda()
+            Fixed_y=item_['move_msk'].float().cuda()
+            Moving_x=item_['fixed_img'].float().cuda()
+            Moving_y=item_['fixed_msk'].float().cuda()
+        else:
+            Fixed_x=item_['fixed_img'].float().cuda()
+            Fixed_y=item_['fixed_msk'].float().cuda()
+            Moving_x=item_['move_img'].float().cuda()
+            Moving_y=item_['move_msk'].float().cuda()
 
+        Moving_x=torch.permute(Moving_x, (0, 1, 3,2,4))
+        Moving_y=torch.permute(Moving_y, (0, 1, 3,2,4))
+        Fixed_y=torch.permute(Fixed_y, (0, 1, 3,2,4))
+        Fixed_x=torch.permute(Fixed_x, (0, 1, 3,2,4))
 
+        Moving_y[Moving_y>nlabels]=0
+        Fixed_y[Fixed_y>nlabels]=0
 
-        planct_x=torch.permute(planct_x, (0, 1, 2,4,3))
-        planct_y=torch.permute(planct_y, (0, 1, 2,4,3))
-        cbct_y=torch.permute(cbct_y, (0, 1, 2,4,3))
-        cbct_x=torch.permute(cbct_x, (0, 1, 2,4,3))
-
-        #print ('info: planct_x size ',planct_x.size())
-        planct_x=torch.permute(planct_x, (0, 1, 4,3,2))
-        planct_y=torch.permute(planct_y, (0, 1,  4,3,2))
-        cbct_y=torch.permute(cbct_y, (0, 1,  4,3,2))
-        cbct_x=torch.permute(cbct_x, (0, 1, 4,3,2))
-
-
-        planct_x=torch.flip(planct_x, [2, 3])
-        planct_y=torch.flip(planct_y, [2, 3])
-        cbct_y=torch.flip(cbct_y, [2, 3])
-        cbct_x=torch.flip(cbct_x, [2, 3])
-
-
-        planct_y[planct_y>4]=0
-        cbct_y[cbct_y>4]=0
-
-        'Multi_channel PlanCT'
-        PlanCT_y_mt = torch.zeros((planct_y.size(0), 4,  *inshape))
+        'Multi_channel Moving'
+        Moving_y_mt = torch.zeros((Moving_y.size(0), nlabels,  *inshape))
         
-        for organ_index in range(1,5):
-            temp_target = torch.zeros(planct_y.size())
-            temp_target[planct_y == organ_index] = 1
+        for organ_index in range(1,nlabels+1):
+            temp_target = torch.zeros(Moving_y.size())
+            temp_target[Moving_y == organ_index] = 1
             
-            PlanCT_y_mt[:,organ_index-1,:,:,:]=torch.squeeze(temp_target)
+            Moving_y_mt[:,organ_index-1,:,:,:]=torch.squeeze(temp_target)
 
-        CBCT_y_mt = torch.zeros((cbct_y.size(0), 4,  *inshape))
+        Fixed_y_mt = torch.zeros((Fixed_y.size(0), nlabels,  *inshape))
  
-        for organ_index in range(1,5):
-            temp_target = torch.zeros(cbct_y.size())
-            temp_target[cbct_y == organ_index] = 1
+        for organ_index in range(1,nlabels+1):
+            temp_target = torch.zeros(Fixed_y.size())
+            temp_target[Fixed_y == organ_index] = 1
             
-            CBCT_y_mt[:,organ_index-1,:,:,:]=torch.squeeze(temp_target)
+            Fixed_y_mt[:,organ_index-1,:,:,:]=torch.squeeze(temp_target)
 
-        planct_y= PlanCT_y_mt.cuda()   
-        CBCT_y_mt=CBCT_y_mt.cuda()
+        Moving_y= Moving_y_mt.cuda()   
+        Fixed_y_mt=Fixed_y_mt.cuda()
         step_start_time = time.time()
         plt_simi_loss=0
         plt_smooth_loss=0
         plt_strcture_loss=0
+        plt_seg_loss=0
         
         loss_list = []
         for iter_id in range(flow_num):
@@ -282,28 +266,29 @@ for epoch in range(args.initial_epoch, args.epochs):
             if iter_id==0:
                 states_h=None 
                 states_c=None 
-                planct_x_def, planct_y_def, pos_flow_cur,states_h,states_c = model(planct_x,planct_y,cbct_x,states_h,states_c)
+                Moving_x_def, Moving_y_def, pos_flow_cur,states_h,states_c = model(Moving_x,Moving_y,Fixed_x,states_h,states_c)
             else:
-                planct_x_def, planct_y_def, pos_flow_cur,states_h,states_c = model(planct_x_def,planct_y_def,cbct_x,states_h,states_c)
+                Moving_x_def, Moving_y_def, pos_flow_cur,states_h,states_c = model(Moving_x_def,Moving_y_def,Fixed_x,states_h,states_c)
             
-            reg_result_new = planct_y_def
+            reg_result_new = Moving_y_def
 
             ## Calculate loss
-            Sim_loss=image_loss_func(cbct_x,planct_x_def)
+            Sim_loss=image_loss_func(Fixed_x,Moving_x_def)
             gradient_loss= grad_loss_func(pos_flow_cur)* smooth_w 
             plt_simi_loss=plt_simi_loss+Sim_loss
             plt_smooth_loss=plt_smooth_loss+gradient_loss
-            
+
+
             # Landmark loss with smoothening to prevent excessive deformation of organs
-            landmark_loss=structure_loss_cred(reg_result_new,CBCT_y_mt)
+            landmark_loss=structure_loss_cred(reg_result_new,Fixed_y_mt)
             plt_strcture_loss=plt_strcture_loss+landmark_loss
             optimizer.zero_grad()
             loss=Sim_loss + gradient_loss + args.seg_w*landmark_loss
             loss.backward()
             optimizer.step()
 
-            planct_x_def=planct_x_def.detach()
-            planct_y_def=planct_y_def.detach()
+            Moving_x_def=Moving_x_def.detach()
+            Moving_y_def=Moving_y_def.detach()
 
         loss= loss
         loss_info = 'loss: %.6f  (%s)' % (loss.item(),', '.join(loss_list))
@@ -314,18 +299,17 @@ for epoch in range(args.initial_epoch, args.epochs):
 
 
         for seg_iter in range (0,flow_num):
-            #print (seg_iter)
             if seg_iter==0:
                 h=None
                 c=None
-                y_pred,_,_,_,_ ,h,c,y_m_pred= model.forward_seg_training_all_enc_lstm(planct_x,cbct_x,planct_y,h,c)
+                y_pred,_,_,_,_ ,h,c,y_m_pred= model.forward_seg_training_all_enc_lstm(Moving_x,Fixed_x,Moving_y,h,c)
             else:
-                y_pred,_,_,_,_,h,c,y_m_pred = model.forward_seg_training_all_enc_lstm(y_pred,cbct_x,y_m_pred,h,c)        
+                y_pred,_,_,_,_,h,c,y_m_pred = model.forward_seg_training_all_enc_lstm(y_pred,Fixed_x,y_m_pred,h,c)        
 
-            y_pre = y_pred.detach()
+            y_pred = y_pred.detach()
             y_m_pred = y_m_pred.detach()
 
-            seg_in = torch.cat((cbct_x,y_pred),1)
+            seg_in = torch.cat((Fixed_x,y_pred),1)
             seg_in = torch.cat((seg_in,y_m_pred),1)
 
 
@@ -336,18 +320,26 @@ for epoch in range(args.initial_epoch, args.epochs):
             seg,h_seg,c_seg = model_seg3d(seg_in,state_seg)
 
             seg_result_new = seg
-            seg_loss=seg_loss_cred(seg_result_new,cbct_y)
+            seg_loss=seg_loss_cred(seg_result_new,Fixed_y)
+
+            
 
             optimizer_seg.zero_grad()
             seg_loss.backward()
             optimizer_seg.step()
+            
             state_seg=[h_seg.detach(),c_seg.detach()]
+            plt_seg_loss=plt_seg_loss+seg_loss
+            #Moving_x_tep=y_pred.detach()
 
         # print step info
         seg_loss_info = 'Seg loss: %.6f  (%s)' % (seg_loss.item(),', '.join(loss_list))
-        Strcture_seg_loss_info = 'Seg loss: %.6f  (%s)' % (landmark_loss.item(),', '.join(loss_list))
+        Strcture_seg_loss_info = 'RegSeg loss: %.6f  (%s)' % (landmark_loss.item(),', '.join(loss_list))
         epoch_info = 'epoch: %04d' % (epoch + 1)
+        #step_info = ('step: %d/%d' % (step + 1, args.steps_per_epoch)).ljust(14)
         time_info = 'time: %.2f sec' % (time.time() - step_start_time)
+
+        #print('  '.join((epoch_info, time_info, loss_info,seg_loss_info)), flush=True)
 
 
         if total_steps%1==0:
@@ -357,17 +349,21 @@ for epoch in range(args.initial_epoch, args.epochs):
             plot_loss_value.append(plt_simi_loss.item())
             plot_loss_value1.append(plt_smooth_loss.item())
             plot_loss_value2.append(plt_strcture_loss.item()) 
+            plot_loss_value3.append(plt_seg_loss.item())                
+
+            ax.plot(plt_iternm,plot_loss_value,color='b',label='Simi_loss',linestyle='solid')
+            ax.plot(plt_iternm,plot_loss_value1,color='k',label='Smooth_loss',linestyle='dashed')
+            ax.plot(plt_iternm,plot_loss_value2,color='r',label='Strcture_loss',linestyle='solid') 
+            #ax.plot(plt_iternm,plot_loss_value3,color='magenta',label='Seg_loss',linestyle='dotted') 
+
                         
 
-            ax.plot(plt_iternm,plot_loss_value,color='r',label='Simi_loss',linestyle='solid')
-            ax.plot(plt_iternm,plot_loss_value1,color='b',label='Smooth_loss',linestyle='dashed')
-            ax.plot(plt_iternm,plot_loss_value2,color='k',label='Strcture_loss',linestyle='solid') 
-
-                        
-
-            plt.xlabel('interation times')
+            plt.xlabel('iteration')
             plt.ylabel('errors/accuracys')
-
+            
+            if iter_count==1:
+                plt.legend()
+            
             plt_name=sv_folder+'error_plot_sim_smooth.png'        
             plt.savefig(plt_name,bbox_inches='tight')     
     
@@ -375,166 +371,117 @@ for epoch in range(args.initial_epoch, args.epochs):
 
             print('  '.join((epoch_info, time_info, loss_info,seg_loss_info,Strcture_seg_loss_info)), flush=True)
 
-            if train_sv_flag == 0:
+            if (train_sv_flag == 0):
                 train_sv_flag = 1
-
                 ### Saving one training image
-                y_pred_show=torch.squeeze(y_pred)
-                planct_x_show=torch.squeeze(planct_x)
-                cbct_x_show=torch.squeeze(cbct_x)
-                y_m_pred_show=torch.squeeze(y_m_pred)
+                y_pred_show=torch.squeeze(Moving_x_def,1)
+                Moving_x_show=torch.squeeze(Moving_x,1)
+                Fixed_x_show=torch.squeeze(Fixed_x,1)
                 seg_show=torch.argmax(seg, dim=1)
-                seg_show=torch.squeeze(seg_show)
-                cbct_y_show=torch.squeeze(cbct_y)
+                seg_show=torch.squeeze(seg_show,0)
+                Fixed_y_show=torch.squeeze(Fixed_y,1)
 
                 'save the images'
                 y_pred_show=y_pred_show.data.cpu().numpy()
                 y_pred_show=y_pred_show[0]
-                y_pred_show = np.squeeze(y_pred_show)
-                y_pred_show = np.flip(y_pred_show, axis=2)
                 y_pred_show  = np.transpose(y_pred_show, (1, 0, 2))
 
                 y_pred_show = nib.Nifti1Image(y_pred_show,np.eye(4))    
-                pred_sv_name=train_tep_sv+'deformed_planCT.nii'
+                pred_sv_name=train_tep_sv+'deformed_Moving.nii'
                 nib.save(y_pred_show, pred_sv_name)   
-
-                y_m_pred_show=y_m_pred_show.data.cpu().numpy()
-                y_m_pred_show=y_m_pred_show[0]
-                y_m_pred_show=np.squeeze(y_m_pred_show)
-                y_m_pred_show = np.flip(y_m_pred_show, axis=2)
-                y_m_pred_show  = np.transpose(y_m_pred_show, (1, 0, 2))
-
-                y_m_pred_show = nib.Nifti1Image(y_m_pred_show,np.eye(4))    
-                pred_sv_name=train_tep_sv+'deformed_planCT_msk.nii'
-                nib.save(y_m_pred_show, pred_sv_name)   
                 
-                planct_x_show=planct_x_show.data.cpu().numpy()
-                planct_x_show=planct_x_show[0]
-                planct_x_show=np.squeeze(planct_x_show)
-                planct_x_show = np.flip(planct_x_show, axis=2)
-                planct_x_show  = np.transpose(planct_x_show, (1, 0, 2))
+                Moving_x_show=Moving_x_show.data.cpu().numpy()
+                Moving_x_show=Moving_x_show[0]
+                Moving_x_show  = np.transpose(Moving_x_show, (1, 0, 2))
 
-                planct_x_show = nib.Nifti1Image(planct_x_show,np.eye(4))    
-                pred_sv_name=train_tep_sv+'ori_planCT.nii'
-                nib.save(planct_x_show, pred_sv_name)  
+                Moving_x_show = nib.Nifti1Image(Moving_x_show,np.eye(4))    
+                pred_sv_name=train_tep_sv+'ori_Moving.nii'
+                nib.save(Moving_x_show, pred_sv_name)  
 
-                cbct_x_show=cbct_x_show.data.cpu().numpy()
-                cbct_x_show=cbct_x_show[0]
-                cbct_x_show=np.squeeze(cbct_x_show)
-                cbct_x_show = np.flip(cbct_x_show, axis=2)
-                cbct_x_show  = np.transpose(cbct_x_show, (1, 0, 2))
+                Fixed_x_show=Fixed_x_show.data.cpu().numpy()
+                Fixed_x_show=Fixed_x_show[0]
+                Fixed_x_show  = np.transpose(Fixed_x_show, (1, 0, 2))
 
-                cbct_x_show = nib.Nifti1Image(cbct_x_show,np.eye(4))    
-                pred_sv_name=train_tep_sv+'ori_CBCT.nii'
-                nib.save(cbct_x_show, pred_sv_name)  
+                Fixed_x_show = nib.Nifti1Image(Fixed_x_show,np.eye(4))    
+                pred_sv_name=train_tep_sv+'ori_Fixed.nii'
+                nib.save(Fixed_x_show, pred_sv_name)  
 
-                cbct_y_show=cbct_y_show.data.cpu().numpy()
-                cbct_y_show=cbct_y_show[0]
-                cbct_y_show=np.squeeze(cbct_y_show)
-                cbct_y_show = np.flip(cbct_y_show, axis=2)
-                cbct_y_show  = np.transpose(cbct_y_show, (1, 0, 2))
+                Fixed_y_show=Fixed_y_show.data.cpu().numpy()
+                Fixed_y_show=Fixed_y_show[0]
+                Fixed_y_show  = np.transpose(Fixed_y_show, (1, 0, 2))
 
-                cbct_y_show = nib.Nifti1Image(cbct_y_show,np.eye(4))    
-                pred_sv_name=train_tep_sv+'ori_CBCT_msk.nii'
-                nib.save(cbct_y_show, pred_sv_name)  
+                Fixed_y_show = nib.Nifti1Image(Fixed_y_show,np.eye(4))    
+                pred_sv_name=train_tep_sv+'ori_Fixed_msk.nii'
+                nib.save(Fixed_y_show, pred_sv_name)  
 
-
-                seg_show=seg_show.data.cpu().float().numpy()
-                seg_show=seg_show[0]
-                seg_show=np.squeeze(seg_show)
-                seg_show = np.flip(seg_show, axis=2)
-                seg_show  = np.transpose(seg_show, (1, 0, 2))
-
-                seg_show = nib.Nifti1Image(seg_show,np.eye(4))    
-                pred_sv_name=train_tep_sv+'ori_CBCT_seg.nii'
-                nib.save(seg_show, pred_sv_name)  
-
-
-            
-
-    if epoch%30==0:
+    if epoch%1==0:
         with torch.no_grad(): # no grade calculation 
 
             best_reg_dsc = 0
             best_seg_dsc = 0
             print('Validation')
             for i_iter_val, item_val in enumerate(val_loader):    
+                # print('VAL')
                 
 
-                cbct_val_img=item_val['fix_img'].float().cuda()
-                cbct_val_msk=item_val['fix_msk'].float().cuda()
-                plan_ct_img=item_val['move_img'].float().cuda()
-                planct_val_msk=item_val['move_msk'].float().cuda()
-                source_name = item_val['move_img_meta_dict']['filename_or_obj'][0].split('/')[-1]
-                target_name = item_val['fix_img_meta_dict']['filename_or_obj'][0].split('/')[-1]
-
-                plan_ct_img=torch.permute(plan_ct_img, (0, 1, 2,4,3))
-                planct_val_msk=torch.permute(planct_val_msk, (0, 1, 2,4,3))
-                cbct_val_img=torch.permute(cbct_val_img, (0, 1, 2,4,3))
-                cbct_val_msk=torch.permute(cbct_val_msk, (0, 1, 2,4,3))
+                Fixed_val_img=item_val['fixed_img'].float().cuda()
+                Fixed_val_msk=item_val['fixed_msk'].float().cuda()
+                Moving_img=item_val['move_img'].float().cuda()
+                Moving_val_msk=item_val['move_msk'].float().cuda()
+                source_name=item_val['fixed_img'].meta['filename_or_obj'][0].split('/')[-1]
+                target_name =item_val['move_img'].meta['filename_or_obj'][0].split('/')[-1]
 
 
-                plan_ct_img=torch.permute(plan_ct_img, (0, 1, 4,3,2))
-                planct_val_msk=torch.permute(planct_val_msk, (0, 1,4,3,2))
-                cbct_val_img=torch.permute(cbct_val_img, (0, 1, 4,3,2))
-                cbct_val_msk=torch.permute(cbct_val_msk, (0, 1,4,3,2))
+                Moving_img=torch.permute(Moving_img, (0, 1, 3,2,4))
+                Moving_val_msk=torch.permute(Moving_val_msk, (0, 1, 3,2,4))
+                Fixed_val_img=torch.permute(Fixed_val_img, (0, 1, 3,2,4))
+                Fixed_val_msk=torch.permute(Fixed_val_msk, (0, 1, 3,2,4))
+
+                Moving_val_msk[Moving_val_msk>nlabels]=0
+                Fixed_val_msk[Fixed_val_msk>nlabels]=0
 
 
-                plan_ct_img=torch.flip(plan_ct_img, [2, 3])
-                planct_val_msk=torch.flip(planct_val_msk, [2, 3])
-                cbct_val_img=torch.flip(cbct_val_img, [2, 3])
-                cbct_val_msk=torch.flip(cbct_val_msk, [2, 3])
-
-
-                planct_val_msk[planct_val_msk>4]=0
-                cbct_val_msk[cbct_val_msk>4]=0
-
-
-                'Multi_channel PlanCT'
-                PlanCT_val_msk_mt = torch.zeros((planct_val_msk.size(0), 4,  *inshape))
+                'Multi_channel moving'
+                Moving_val_msk_mt = torch.zeros((Moving_val_msk.size(0), nlabels,  *inshape))
                 
-                for organ_index in range(1,5):
-                    temp_target = torch.zeros(planct_val_msk.size())
-                    temp_target[planct_val_msk == organ_index] = 1
+                for organ_index in range(1,1+nlabels):
+                    temp_target = torch.zeros(Moving_val_msk.size())
+                    temp_target[Moving_val_msk == organ_index] = 1
                     
-                    PlanCT_val_msk_mt[:,organ_index-1,:,:,:]=torch.squeeze(temp_target)
+                    Moving_val_msk_mt[:,organ_index-1,:,:,:]=torch.squeeze(temp_target)
 
-                planct_val_msk= PlanCT_val_msk_mt.cuda()   
+                Moving_val_msk= Moving_val_msk_mt.cuda()   
                 
                 # feed the data in
                 for seg_iter_val in range (0,flow_num+1):
                     if seg_iter_val==0:
                         h=None
                         c=None
-                        y_pred_val,dvf_flow,_,_,_ ,h,c,y_m_pred_val= model.forward_seg_training_all_enc_lstm(plan_ct_img,cbct_val_img,planct_val_msk,h,c)
+                        y_pred_val,dvf_flow,_,_,_ ,h,c,y_m_pred_val= model.forward_seg_training_all_enc_lstm(Moving_img,Fixed_val_img,Moving_val_msk,h,c)
                     else:
-                        y_pred_val,dvf_flow,_,_,_,h,c,y_m_pred_val = model.forward_seg_training_all_enc_lstm(y_pred_val,cbct_val_img,y_m_pred_val,h,c) 
+                        y_pred_val,dvf_flow,_,_,_,h,c,y_m_pred_val = model.forward_seg_training_all_enc_lstm(y_pred_val,Fixed_val_img,y_m_pred_val,h,c) 
                 
                     if seg_iter_val ==0:
                         state_seg=None
-                    seg_in_val=torch.cat((cbct_val_img,y_pred_val),1)
+                    seg_in_val=torch.cat((Fixed_val_img,y_pred_val),1)
                     seg_in_val=torch.cat((seg_in_val,y_m_pred_val),1)
                     seg_result,h_seg,c_seg=model_seg3d(seg_in_val,state_seg)
                     state_seg=[h_seg,c_seg]
 
                 seg_result=torch.argmax(seg_result, dim=1)
                 
-
                 reg_result=torch.zeros(1, *inshape)
-                reg_result[y_m_pred_val[:,0,:,:,:]>0.5]=1
-                reg_result[y_m_pred_val[:,1,:,:,:]>0.5]=2
-                reg_result[y_m_pred_val[:,2,:,:,:]>0.5]=3
-                reg_result[y_m_pred_val[:,3,:,:,:]>0.5]=4
+                for index in range(0,nlabels):
+                    reg_result[y_m_pred_val[:,index,:,:,:]>0.5]=index+1
 
-                #print (dsc_reg_4)
                 info = {'Source_Name':source_name, 'Target_Name':target_name}
 
-                spacing = (1.0,1.0,1.0) # HD95 calculated in voxel units if spacing is kept as 1.0,1.0,1.0
-                eval.calculate_results(info, spacing, cbct_val_msk, planct_val_msk, reg_result, seg_result, dvf_flow)
+                spacing = (1.0,1.0,1.0) # Not actual spacing, needs to be fixed
+                eval.calculate_results(info, spacing, Fixed_val_msk, Moving_val_msk, reg_result, seg_result, dvf_flow)
         
         info = eval.average_results()
-        seg_dice = float(info['Seg_Avg_Dice'][:4])
-        reg_dice = float(info['Reg_Avg_Dice'][:4])
+        seg_dice = float(info['Seg_Avg_Dice'][:nlabels])
+        reg_dice = float(info['Reg_Avg_Dice'][:nlabels])
 
         if seg_dice> best_seg_dsc:
             model_sv_path=sv_folder+'sv_reg_model_seg.pt'
@@ -568,6 +515,10 @@ for epoch in range(args.initial_epoch, args.epochs):
             
 
                         
+
+
+
+
 
 
 
