@@ -84,6 +84,7 @@ parser.add_argument('--flow_range', type=float, default=5, help='flow range (def
 parser.add_argument('--flownum', type=int, default=7, help='flow number (default: 7)')
 # for output
 parser.add_argument('--svdir', type=str, default='train', help='weight of deformation loss (default: 0.01)')
+parser.add_argument('--class_list',nargs='+',default=['Liver', 'Lg_Bowel', 'Sm_Bowel', 'Duo_Stomach'],help='List of class names')
 #print ('flow_range is ',args.flow_range)
 args = parser.parse_args()
 smooth_w=args.smooth
@@ -115,6 +116,9 @@ print ('flow range is ',args.flow_range)
 # Input image shape
 inshape = args.inshape if args.inshape else (128,192,128)
 
+#class_list = ['Liver', 'Lg_Bowel','Sm_Bowel','Duo_Stomach']
+class_list=args.class_list
+nlabels=len(class_list)
 
 # device handling
 gpus = args.gpu.split(',')
@@ -154,7 +158,7 @@ if nb_gpus > 1:
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
 # Segmentation Model
-model_seg3d = vxm.networks.UNet3D_Seg_LSTM(in_channels=1+1+4,out_channels=4+1,final_sigmoid=False)
+model_seg3d = vxm.networks.UNet3D_Seg_LSTM(in_channels=nlabels+1+1,out_channels=nlabels+1,final_sigmoid=False)
 
 # Segmentation Optimizer
 optimizer_seg = torch.optim.Adam(model_seg3d.parameters(), lr=args.lr)
@@ -186,7 +190,7 @@ seg_loss_cred = DiceCELoss(to_onehot_y=True,
 
 
 
-structure_loss_cred = vxm.losses.DiceLoss_test_use()
+structure_loss_cred = vxm.losses.DiceLoss_test_use(num_organ=nlabels)
 
 train_loader_a,val_loader=get_dataloader(args)
 
@@ -199,8 +203,6 @@ iter_count=0
 flow_ini=torch.zeros(1, 3, *inshape).cuda()
 range_flow=1
 
-
-class_list = ['Liver', 'Lg_Bowel','Sm_Bowel','Duo_Stomach']
 eval = Eval(train_tep_sv, class_list)
 
 
@@ -230,21 +232,21 @@ for epoch in range(args.initial_epoch, args.epochs):
         Fixed_y=torch.permute(Fixed_y, (0, 1, 3,2,4))
         Fixed_x=torch.permute(Fixed_x, (0, 1, 3,2,4))
 
-        Moving_y[Moving_y>4]=0
-        Fixed_y[Fixed_y>4]=0
+        Moving_y[Moving_y>nlabels]=0
+        Fixed_y[Fixed_y>nlabels]=0
 
         'Multi_channel Moving'
-        Moving_y_mt = torch.zeros((Moving_y.size(0), 4,  *inshape))
+        Moving_y_mt = torch.zeros((Moving_y.size(0), nlabels,  *inshape))
         
-        for organ_index in range(1,5):
+        for organ_index in range(1,nlabels+1):
             temp_target = torch.zeros(Moving_y.size())
             temp_target[Moving_y == organ_index] = 1
             
             Moving_y_mt[:,organ_index-1,:,:,:]=torch.squeeze(temp_target)
 
-        Fixed_y_mt = torch.zeros((Fixed_y.size(0), 4,  *inshape))
+        Fixed_y_mt = torch.zeros((Fixed_y.size(0), nlabels,  *inshape))
  
-        for organ_index in range(1,5):
+        for organ_index in range(1,nlabels+1):
             temp_target = torch.zeros(Fixed_y.size())
             temp_target[Fixed_y == organ_index] = 1
             
@@ -267,25 +269,6 @@ for epoch in range(args.initial_epoch, args.epochs):
                 Moving_x_def, Moving_y_def, pos_flow_cur,states_h,states_c = model(Moving_x,Moving_y,Fixed_x,states_h,states_c)
             else:
                 Moving_x_def, Moving_y_def, pos_flow_cur,states_h,states_c = model(Moving_x_def,Moving_y_def,Fixed_x,states_h,states_c)
-
-            # reg_result_new = torch.squeeze(Moving_y_def.clone()).data.cpu().numpy()
-
-            ### Code to deal with incomplete segmentations (2 cm ring around the tumor)
-            # for label_num in range(Moving_y_def.shape[1]):
-            #     if (np.sum(torch.squeeze(Moving_y_def).data.cpu().numpy()[label_num:,:,105]>0)==0):
-            #         flag = 0
-            #         for i in range(60, Moving_y_def.shape[-1]):
-            #             slice = torch.squeeze(Fixed_y_mt).data.cpu().numpy()[label_num,:,:,i]
-                        
-            #             if flag == 0:
-            #                 if np.sum(slice>0) < 100:
-            #                     flag = 1
-            #             else:
-            #                 # seg_result_new[:,:,i] = 0
-            #                 reg_result_new[label_num, :,:,i] = 0
-
-            # reg_result_new = np.expand_dims(reg_result_new, axis=0)
-            # reg_result_new = torch.tensor(reg_result_new).cuda()
             
             reg_result_new = Moving_y_def
 
@@ -295,12 +278,7 @@ for epoch in range(args.initial_epoch, args.epochs):
             plt_simi_loss=plt_simi_loss+Sim_loss
             plt_smooth_loss=plt_smooth_loss+gradient_loss
 
-            # seg_in_r=torch.cat((Fixed_x,Moving_x_def),1)
-            # seg_in_r=torch.cat((seg_in_r,Moving_y_def),1)
 
-            # if iter_id ==0:
-            #     state_seg_r=None
-            
             # Landmark loss with smoothening to prevent excessive deformation of organs
             landmark_loss=structure_loss_cred(reg_result_new,Fixed_y_mt)
             plt_strcture_loss=plt_strcture_loss+landmark_loss
@@ -321,8 +299,6 @@ for epoch in range(args.initial_epoch, args.epochs):
 
 
         for seg_iter in range (0,flow_num):
-            #print(seg_iter)
-            #print (seg_iter)
             if seg_iter==0:
                 h=None
                 c=None
@@ -343,27 +319,6 @@ for epoch in range(args.initial_epoch, args.epochs):
 
             seg,h_seg,c_seg = model_seg3d(seg_in,state_seg)
 
-
-            ### Code to deal with incomplete segmentations (2 cm ring around the tumor)
-            # seg_result_new = torch.squeeze(seg.clone()).data.cpu().numpy()
-
-            # for label_num in range(seg.shape[1]):
-            #     if (np.sum(torch.squeeze(Fixed_y).data.cpu().numpy()[:,:,105]>0)==0):
-            #         flag = 0
-            #         for i in range(60, Fixed_y.shape[-1]):
-            #             slice = torch.squeeze(Fixed_y).data.cpu().numpy()[:,:,i]
-                        
-            #             if flag == 0:
-            #                 if np.sum(slice>0) < 300:
-            #                     flag = 1
-            #             else:
-            #                 # seg_result_new[:,:,i] = 0
-            #                 seg_result_new[label_num, :,:,i] = 0
-            # seg_result_new = np.expand_dims(seg_result_new, axis=0)
-            # seg_result_new = torch.tensor(seg_result_new).cuda()
-
-            # print ('seg size ',seg.size())
-            # print ('Fixed_y size ',Fixed_y.size())
             seg_result_new = seg
             seg_loss=seg_loss_cred(seg_result_new,Fixed_y)
 
@@ -482,14 +437,14 @@ for epoch in range(args.initial_epoch, args.epochs):
                 Fixed_val_img=torch.permute(Fixed_val_img, (0, 1, 3,2,4))
                 Fixed_val_msk=torch.permute(Fixed_val_msk, (0, 1, 3,2,4))
 
-                Moving_val_msk[Moving_val_msk>4]=0
-                Fixed_val_msk[Fixed_val_msk>4]=0
+                Moving_val_msk[Moving_val_msk>nlabels]=0
+                Fixed_val_msk[Fixed_val_msk>nlabels]=0
 
 
                 'Multi_channel moving'
-                Moving_val_msk_mt = torch.zeros((Moving_val_msk.size(0), 4,  *inshape))
+                Moving_val_msk_mt = torch.zeros((Moving_val_msk.size(0), nlabels,  *inshape))
                 
-                for organ_index in range(1,5):
+                for organ_index in range(1,1+nlabels):
                     temp_target = torch.zeros(Moving_val_msk.size())
                     temp_target[Moving_val_msk == organ_index] = 1
                     
@@ -516,10 +471,8 @@ for epoch in range(args.initial_epoch, args.epochs):
                 seg_result=torch.argmax(seg_result, dim=1)
                 
                 reg_result=torch.zeros(1, *inshape)
-                reg_result[y_m_pred_val[:,0,:,:,:]>0.5]=1
-                reg_result[y_m_pred_val[:,1,:,:,:]>0.5]=2
-                reg_result[y_m_pred_val[:,2,:,:,:]>0.5]=3
-                reg_result[y_m_pred_val[:,3,:,:,:]>0.5]=4
+                for index in range(0,nlabels):
+                    reg_result[y_m_pred_val[:,index,:,:,:]>0.5]=index+1
 
                 info = {'Source_Name':source_name, 'Target_Name':target_name}
 
@@ -527,8 +480,8 @@ for epoch in range(args.initial_epoch, args.epochs):
                 eval.calculate_results(info, spacing, Fixed_val_msk, Moving_val_msk, reg_result, seg_result, dvf_flow)
         
         info = eval.average_results()
-        seg_dice = float(info['Seg_Avg_Dice'][:4])
-        reg_dice = float(info['Reg_Avg_Dice'][:4])
+        seg_dice = float(info['Seg_Avg_Dice'][:nlabels])
+        reg_dice = float(info['Reg_Avg_Dice'][:nlabels])
 
         if seg_dice> best_seg_dsc:
             model_sv_path=sv_folder+'sv_reg_model_seg.pt'
